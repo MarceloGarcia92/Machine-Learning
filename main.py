@@ -6,11 +6,13 @@ import sys
 #Support libraries
 import pandas as pd
 import numpy as np
+from tpot import TPOTClassifier
 
 #Sklearn
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
 
 #Mlflow preferences
 from urllib.parse import urlparse
@@ -34,76 +36,74 @@ if __name__ == "__main__":
     np.random.seed(40)
 
     
-    df = pd.read_csv('crx.data', header=None)
-    
-    #Drop useful columns: DriverLicense, ZipCode
-    df = df.drop(columns=[11, 13])
+    transfusion = pd.read_csv('transfusion.data')
+
+    transfusion.rename(
+    columns={'whether he/she donated blood in March 2007': 'target'},
+    inplace=True)
 
     #Split the Data
-    x_train, x_test = train_test_split(df, test_size=0.33, random_state=42)
+    x_train, x_test, y_train, y_test = train_test_split(
+        transfusion.drop(columns='target'),
+        transfusion.target,
+        test_size=0.25,
+        random_state=42,
+        stratify=transfusion.target
+)
 
-    #Preprocessing stage: Handle missing values
-    x_train = x_train.replace('?', np.NaN)
-    x_test = x_test.replace('?', np.NaN)
+    # Instantiate TPOTClassifier
+    tpot = TPOTClassifier(
+        generations=5,
+        population_size=20,
+        verbosity=2,
+        scoring='roc_auc',
+        random_state=42,
+        disable_update_check=True,
+        config_dict='TPOT light'
+    )
 
-    for data in [x_train, x_test]:
-        for idx, nan in enumerate(data.isna().sum()):
-            if nan > 0:
-                print(f'The col {data.columns[idx]} have {nan} NaN values')
-            else:
-                print(f'The col {data.columns[idx]} don\'t have NaN values')
+    tpot.fit(x_train, y_train)
 
-    x_train.fillna(x_train.mean(), inplace=True)
-    x_test.fillna(x_test.mean(), inplace=True)
+    # AUC score for tpot model
+    tpot_auc_score = roc_auc_score(y_test, tpot.predict_proba(x_test)[:, 1])
+    print(f'\nAUC score: {tpot_auc_score:.4f}')
 
-    for col in x_train.columns:
-        if x_train[col].dtypes == 'object':
-            x_train = x_train.fillna(x_train[col].value_counts().index[0])
-            x_test = x_test.fillna(x_train[col].value_counts().index[0])
+    # Print best pipeline steps
+    print('\nBest pipeline steps:', end='\n')
+    for idx, (name, transform) in enumerate(tpot.fitted_pipeline_.steps, start=1):
+        # Print idx and transform
+        print(f'{name}. {transform}')
 
-    for data in [x_train, x_test]:
-        for idx, nan in enumerate(data.isna().sum()):
-            if nan > 0:
-                print(f'The col {data.columns[idx]} have {nan} NaN values')
-            else:
-                print(f'The col {data.columns[idx]} don\'t have NaN values')
+    # Copy X_train and X_test into X_train_normed and X_test_normed
+    X_train_normed, X_test_normed = x_train.copy(), x_test.copy()
 
-    #Preprocessing stage: Categorical -> Numerical transfomation
-    x_train = pd.get_dummies(x_train)
-    x_test = pd.get_dummies(x_test)
+    # Specify which column to normalize
+    col_to_normalize = 'Monetary (c.c. blood)' 
 
-    x_test = x_test.reindex(columns=x_train.columns, fill_value=0)
+    # Log normalization
+    for df_ in [X_train_normed, X_test_normed]:
+        # Add log normalized column
+        df_['monetary_log'] = np.log(df_[col_to_normalize])
+        # Drop the original column
+        df_.drop(columns=col_to_normalize, inplace=True)
 
-    x_train, y_train = x_train.iloc[:,:-1].values, x_train.iloc[:,-1].values
-    x_test, y_test = x_test.iloc[:,:-1].values, x_test.iloc[:,-1].values
-
-    # Instantiate MinMaxScaler and use it to rescale X_train and X_test
-    scaler = MinMaxScaler()
-    rescaledX_train = scaler.fit_transform(x_train)
-    rescaledX_test = scaler.transform(x_test)
+    # Check the variance for X_train_normed
+    X_train_normed.var().round(3)
     
     with mlflow.start_run():
-        
-        #Model:
-        lr = LogisticRegression()
 
-        #Improving models: Hyperparameters
-        grid_model = GridSearchCV(estimator=lr, param_grid=param_grid, cv=5)
+        lr = LogisticRegression(
+            solver='liblinear',
+            random_state=42
+        )
 
-        # Fit grid_model to the data
-        grid_model_result = grid_model.fit(rescaledX_train, y_train)
+        # Train the model
+        lr.fit(X_train_normed, y_train)
 
-        # Summarize results
-        best_score, best_params = grid_model_result.best_score_, grid_model_result.best_params_
-        print("Best: %f using %s" % (best_score, best_params))
+        #Prediction
+        y_pred = lr.predict(X_test_normed)
 
-        # Extract the best model and evaluate it on the test set
-        best_model = grid_model_result.best_estimator_
-        print("Accuracy of logistic regression classifier: ", best_model.score(rescaledX_test, y_test))
-
-        predicted_qualities = best_model.predict(rescaledX_test)
-
-        (rmse, mae, r2) = eval_metrics(y_test, predicted_qualities)
+        (rmse, mae, r2) = eval_metrics(y_test, y_pred)
 
         print("Elasticnet model (alpha={:f}, l1_ratio={:f}):".format(alpha, l1_ratio))
         print("  RMSE: %s" % rmse)
@@ -116,8 +116,8 @@ if __name__ == "__main__":
         mlflow.log_metric("r2", r2)
         mlflow.log_metric("mae", mae)
 
-        predictions = best_model.predict(x_train)
-        signature = infer_signature(x_train, predictions)
+        predictions = lr.predict(X_train_normed)
+        signature = infer_signature(X_train_normed, predictions)
 
         tracking_url_type_store = urlparse(mlflow.get_tracking_uri()).scheme
 
@@ -128,7 +128,7 @@ if __name__ == "__main__":
             # please refer to the doc for more information:
             # https://mlflow.org/docs/latest/model-registry.html#api-workflow
             mlflow.sklearn.log_model(
-                best_model, "model", registered_model_name="LogisticRegression", signature=signature
+                lr, "model", registered_model_name="LogisticRegression", signature=signature
             )
         else:
             mlflow.sklearn.log_model(lr, "model", signature=signature)
