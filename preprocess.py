@@ -3,6 +3,20 @@ from sklearn.model_selection import train_test_split
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import StandardScaler
 
+def missing_data(df):
+    """
+    Check the percentage of nan values on each column.
+    Args:
+        df (DataFrame): Data of the experimentation
+    """
+    #Calculate the percentage
+    nan = df.isnull().sum()/len(df)*100
+
+    #Selection of the columns with nan values
+    nan = nan[nan>0].sort_values()
+
+    return nan
+
 def preprocess_df(df, feature_selection, target_var):
     """
     Split dataframe into X and y, and train and test consecutively. 
