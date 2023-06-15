@@ -1,3 +1,5 @@
+from pandas import get_dummies
+
 from sklearn.model_selection import train_test_split
 
 from sklearn.impute import SimpleImputer
@@ -32,6 +34,10 @@ def preprocess_df(df, feature_selection, target_var):
     
     # Split the data
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=1)
+
+    #Preprocessing stage: Categorical -> Numerical transfomation
+    X_train = get_dummies(X_train)
+    X_test = get_dummies(X_test)
     
     # Impute missing values
     imputer = SimpleImputer(strategy="mean")
