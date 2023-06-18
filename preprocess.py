@@ -3,13 +3,29 @@ from pandas import get_dummies
 from sklearn.model_selection import train_test_split
 
 from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+
+def clean_unique_cat(columns:list, df):
+    """
+    Delete the values of categorical columns when they have only with values.
+    Args:
+        columns (list): list of columns with categorical data to check
+        df (DataFrame): Dataframe o be processed"""
+    
+    for col in columns:
+        #Iteration for each value/category in the column.
+        for value, count in df[col].value_counts().items():
+            if count == 1:
+                #Delete the value/category from the DataFrame.
+                df = df[df[col] != value]
+
+    return df
 
 def missing_data(df):
     """
     Check the percentage of nan values on each column.
     Args:
-        df (DataFrame): Data of the experimentation
+        df (DataFrame): Data of the experimentation.
     """
     #Calculate the percentage
     nan = df.isnull().sum()/len(df)*100
@@ -22,7 +38,7 @@ def missing_data(df):
 def preprocess_df(df, feature_selection, target_var):
     """
     Split dataframe into X and y, and train and test consecutively. 
-    Then impute and scale both train and test features.
+    Then impute and scale both train and test features, using get_dummies, SimpleImputer and StandarScaler/MinMaxScaler statements.
     Args:
         df (DataFrame): Data of the experimentation
         feature_selection (list): list of columns 
